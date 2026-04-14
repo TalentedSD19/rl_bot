@@ -28,19 +28,19 @@ def _get_algo(name: str):
     if name == "ppo":
         import ppo
         return ppo
-    # elif name == "dqn":
-    #     import dqn
-    #     return dqn
-    # elif name == "sac":
-    #     import sac
-    #     return sac
-    raise ValueError(f"Unknown algorithm: {name!r}. Choose from: ppo")
+    elif name == "dqn":
+        import dqn
+        return dqn
+    elif name == "sac":
+        import sac
+        return sac
+    raise ValueError(f"Unknown algorithm: {name!r}. Choose from: ppo, dqn, sac")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Husky RL trainer")
     parser.add_argument("--algo",   default="ppo",
-                        choices=["ppo"],   # extend as algos are added
+                        choices=["ppo", "dqn", "sac"],
                         help="RL algorithm to use")
     parser.add_argument("--run",    action="store_true",
                         help="Run inference instead of training")

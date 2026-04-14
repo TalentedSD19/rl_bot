@@ -1,11 +1,11 @@
 """
 models.py  --  neural network architectures
 
-ActorCritic   : shared trunk + policy head + value head  (used by PPO)
-apply_spin_mask : action masking based on camera observation
-
-When adding DQN: put QNetwork here.
-When adding SAC: put SACActorNetwork + SACCriticNetwork here.
+ActorCritic        : shared trunk + policy head + value head  (PPO)
+QNetwork           : state -> Q-values for all actions          (DQN)
+SACDiscreteActor   : state -> action probabilities              (SAC)
+SACDiscreteCritic  : state -> Q-values for all actions          (SAC twin)
+apply_spin_mask    : action masking shared by all algorithms
 """
 
 import torch
@@ -88,22 +88,67 @@ def apply_spin_mask(logits: torch.Tensor, states: torch.Tensor) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
-# Placeholder: DQN Q-Network (add implementation when ready)
+# DQN: Q-Network
 # ---------------------------------------------------------------------------
-# class QNetwork(nn.Module):
-#     def __init__(self, state_dim=OBS_DIM, n_actions=N_ACTIONS, hidden=128):
-#         super().__init__()
-#         self.net = nn.Sequential(
-#             nn.Linear(state_dim, hidden), nn.ReLU(),
-#             nn.Linear(hidden, hidden),   nn.ReLU(),
-#             nn.Linear(hidden, n_actions),
-#         )
-#     def forward(self, x):
-#         return self.net(x)
+
+class QNetwork(nn.Module):
+    """Maps state to Q-values for every discrete action."""
+    def __init__(self, state_dim: int = OBS_DIM, n_actions: int = N_ACTIONS,
+                 hidden: int = 128):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden),   nn.ReLU(),
+            nn.Linear(hidden, n_actions),
+        )
+
+    def forward(self, x):
+        return self.net(x)
 
 
 # ---------------------------------------------------------------------------
-# Placeholder: SAC Actor / Twin Critics (add implementation when ready)
+# SAC (Discrete): Actor + Critic
 # ---------------------------------------------------------------------------
-# class SACActorNetwork(nn.Module): ...
-# class SACCriticNetwork(nn.Module): ...
+
+class SACDiscreteActor(nn.Module):
+    """
+    Outputs a probability distribution over discrete actions.
+    Spin mask is applied to logits before softmax so illegal spins
+    get zero probability.
+    """
+    def __init__(self, state_dim: int = OBS_DIM, n_actions: int = N_ACTIONS,
+                 hidden: int = 256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden),   nn.ReLU(),
+            nn.Linear(hidden, n_actions),
+        )
+
+    def evaluate(self, states):
+        """Returns (probs, log_probs, entropy) — all per-action tensors."""
+        logits = self.net(states)
+        logits = apply_spin_mask(logits, states)
+        probs  = torch.softmax(logits, dim=-1)
+        probs_clamped = probs.clamp(min=1e-8)          # numerical safety
+        log_probs     = torch.log(probs_clamped)
+        entropy       = -(probs * log_probs).sum(1)    # scalar per sample
+        return probs, log_probs, entropy
+
+
+class SACDiscreteCritic(nn.Module):
+    """
+    Single Q-network: state -> Q-value for every discrete action.
+    Instantiate two of these in SACAgent for the twin-critic trick.
+    """
+    def __init__(self, state_dim: int = OBS_DIM, n_actions: int = N_ACTIONS,
+                 hidden: int = 256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden),   nn.ReLU(),
+            nn.Linear(hidden, n_actions),
+        )
+
+    def forward(self, x):
+        return self.net(x)
