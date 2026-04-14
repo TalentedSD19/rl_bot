@@ -18,7 +18,7 @@ import torch.optim as optim
 
 from config import DQN, MAX_STEPS, PHASE_NAMES, ACTION_NAMES
 from environment import HuskyTask2Env
-from models import QNetwork, apply_spin_mask
+from models import DuelingQNetwork, apply_spin_mask
 
 _C = DQN
 
@@ -65,15 +65,19 @@ def dqn_update(policy, target, optimizer, batch, device):
     # Current Q-values for taken actions
     q_values = policy(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
-    # Target: greedy next Q with spin mask applied
+    # Double DQN target: policy net selects action, target net evaluates it.
+    # Eliminates the maximisation bias of vanilla DQN.
     with torch.no_grad():
-        next_q     = apply_spin_mask(target(next_states), next_states)
-        max_next_q = next_q.max(1)[0]
-        target_q   = rewards + _C["GAMMA"] * (1.0 - dones) * max_next_q
+        next_q_policy  = apply_spin_mask(policy(next_states), next_states)
+        next_actions   = next_q_policy.argmax(1, keepdim=True)
+        next_q_target  = apply_spin_mask(target(next_states), next_states)
+        max_next_q     = next_q_target.gather(1, next_actions).squeeze(1)
+        target_q       = rewards + _C["GAMMA"] * (1.0 - dones) * max_next_q
 
     loss = nn.functional.smooth_l1_loss(q_values, target_q)
     optimizer.zero_grad()
     loss.backward()
+    nn.utils.clip_grad_norm_(policy.parameters(), max_norm=_C["GRAD_CLIP"])
     optimizer.step()
     return loss.item()
 
@@ -87,8 +91,8 @@ def train(save_prefix: str = "husky_dqn"):
     print(f"Device: {device}")
 
     env    = HuskyTask2Env(gui=False)
-    policy = QNetwork(hidden=_C["HIDDEN"]).to(device)
-    target = QNetwork(hidden=_C["HIDDEN"]).to(device)
+    policy = DuelingQNetwork(hidden=_C["HIDDEN"]).to(device)
+    target = DuelingQNetwork(hidden=_C["HIDDEN"]).to(device)
     target.load_state_dict(policy.state_dict())
     target.eval()
 
@@ -186,7 +190,7 @@ def train(save_prefix: str = "husky_dqn"):
 
 def run_trained(model_path: str = "husky_dqn_best.pth", n_episodes: int = 5):
     device = torch.device("cpu")
-    policy = QNetwork(hidden=_C["HIDDEN"]).to(device)
+    policy = DuelingQNetwork(hidden=_C["HIDDEN"]).to(device)
     policy.load_state_dict(torch.load(model_path, map_location=device,
                                       weights_only=True))
     policy.eval()

@@ -91,19 +91,36 @@ def apply_spin_mask(logits: torch.Tensor, states: torch.Tensor) -> torch.Tensor:
 # DQN: Q-Network
 # ---------------------------------------------------------------------------
 
-class QNetwork(nn.Module):
-    """Maps state to Q-values for every discrete action."""
+class DuelingQNetwork(nn.Module):
+    """
+    Dueling DQN architecture (Wang et al. 2016).
+
+    Shared trunk feeds two separate streams:
+      Value stream     V(s)        -- how good is this state in general
+      Advantage stream A(s, a)     -- how much better is each action vs average
+
+    Q(s, a) = V(s) + A(s, a) - mean_a'[ A(s, a') ]
+
+    Subtracting the mean advantage makes Q identifiable (otherwise V and A
+    can shift by an arbitrary constant and still sum to the same Q).
+    This decomposition helps on tasks where some states are clearly
+    bad/good regardless of action — e.g. the find / approach phases here.
+    """
     def __init__(self, state_dim: int = OBS_DIM, n_actions: int = N_ACTIONS,
                  hidden: int = 128):
         super().__init__()
-        self.net = nn.Sequential(
+        self.trunk = nn.Sequential(
             nn.Linear(state_dim, hidden), nn.ReLU(),
             nn.Linear(hidden, hidden),   nn.ReLU(),
-            nn.Linear(hidden, n_actions),
         )
+        self.value_stream     = nn.Linear(hidden, 1)
+        self.advantage_stream = nn.Linear(hidden, n_actions)
 
     def forward(self, x):
-        return self.net(x)
+        f = self.trunk(x)
+        v = self.value_stream(f)                          # (B, 1)
+        a = self.advantage_stream(f)                      # (B, N_ACTIONS)
+        return v + (a - a.mean(dim=1, keepdim=True))      # (B, N_ACTIONS)
 
 
 # ---------------------------------------------------------------------------

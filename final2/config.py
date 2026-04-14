@@ -76,10 +76,11 @@ DQN = dict(
     LR             = 1e-3,
     EPS_START      = 1.0,
     EPS_END        = 0.05,
-    EPS_DECAY      = 0.995,
+    EPS_DECAY      = 0.98,        # was 0.995; reaches 0.05 in ~147 eps not ~595
     TARGET_UPDATE  = 500,
     HIDDEN         = 128,
     EARLY_STOP_RATE = 0.85,
+    GRAD_CLIP      = 10.0,        # prevent Q-value explosion
 )
 
 # -- SAC hyperparameters (placeholder for future) ----------------------------
@@ -90,9 +91,12 @@ SAC = dict(
     GAMMA          = 0.99,
     LR_ACTOR       = 3e-4,
     LR_CRITIC      = 3e-4,
-    LR_ALPHA       = 3e-4,
+    LR_ALPHA       = 3e-5,        # slower alpha adaptation prevents runaway
     ALPHA_INIT     = 0.2,
     TAU            = 0.005,
     HIDDEN         = 256,
     EARLY_STOP_RATE = 0.85,
+    LOG_ALPHA_MIN  = -10.0,       # alpha floor ~4.5e-5  (never fully off)
+    LOG_ALPHA_MAX  =  2.0,        # alpha cap  ~7.4      (hard clamp)
+    GRAD_CLIP      = 5.0,         # critic gradient clip
 )

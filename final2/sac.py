@@ -88,8 +88,12 @@ class SACAgent:
             list(self.critic1.parameters()) + list(self.critic2.parameters()),
             lr=_C["LR_CRITIC"])
 
-        # Learnable temperature; target = maximum entropy for N discrete actions
-        self.target_entropy = np.log(N_ACTIONS)
+        # Learnable temperature.
+        # Target is 98% of theoretical max entropy (log N_ACTIONS for uniform
+        # policy over N_ACTIONS).  Using 100% means the policy must be
+        # perfectly uniform to satisfy the constraint — in practice entropy
+        # is always below that, so alpha never stops growing.
+        self.target_entropy = 0.98 * np.log(N_ACTIONS)
         self.log_alpha      = torch.tensor(
             np.log(_C["ALPHA_INIT"]), dtype=torch.float32,
             requires_grad=True, device=device)
@@ -132,6 +136,9 @@ class SACAgent:
 
         self.opt_critic.zero_grad()
         critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.critic1.parameters()) + list(self.critic2.parameters()),
+            max_norm=_C["GRAD_CLIP"])
         self.opt_critic.step()
 
         # -- Actor update ----------------------------------------------------
@@ -152,6 +159,10 @@ class SACAgent:
         self.opt_alpha.zero_grad()
         alpha_loss.backward()
         self.opt_alpha.step()
+        # Hard clamp: keep log_alpha in [LOG_ALPHA_MIN, LOG_ALPHA_MAX] so
+        # alpha never exceeds ~e^2 ≈ 7.4 regardless of entropy deficit.
+        with torch.no_grad():
+            self.log_alpha.clamp_(_C["LOG_ALPHA_MIN"], _C["LOG_ALPHA_MAX"])
 
         # -- Soft target update (Polyak) -------------------------------------
         tau = _C["TAU"]
