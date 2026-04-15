@@ -126,7 +126,8 @@ def evaluate(name: str, select_fn, n_episodes: int) -> dict:
             state         = next_state
 
             if done:
-                won       = True
+                # win only if the cylinder physically landed inside the box
+                won       = env.task_success
                 last_step = step
                 break
         else:

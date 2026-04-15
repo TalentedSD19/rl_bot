@@ -93,7 +93,7 @@ class SACAgent:
         # policy over N_ACTIONS).  Using 100% means the policy must be
         # perfectly uniform to satisfy the constraint — in practice entropy
         # is always below that, so alpha never stops growing.
-        self.target_entropy = 0.98 * np.log(N_ACTIONS)
+        self.target_entropy = _C["TARGET_ENTROPY_SCALE"] * np.log(N_ACTIONS)
         self.log_alpha      = torch.tensor(
             np.log(_C["ALPHA_INIT"]), dtype=torch.float32,
             requires_grad=True, device=device)
@@ -296,7 +296,6 @@ def run_trained(model_path: str = "husky_sac_best.pth", n_episodes: int = 5):
                   f"| r_vis={int(bool(state[7]))} r_area={state[6]:.3f} "
                   f"| r={reward:+.2f}")
 
-            time.sleep(1 / 60)
 
             if done:
                 wins += 1

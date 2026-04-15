@@ -282,7 +282,6 @@ def run_trained(model_path: str = "husky_ppo_best.pth", n_episodes: int = 5):
                   f"| r_vis={int(bool(state[7]))} r_area={state[6]:.3f} "
                   f"| r={reward:+.2f}")
 
-            time.sleep(1 / 60)
 
             if done:
                 wins += 1

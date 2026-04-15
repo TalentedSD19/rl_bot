@@ -59,12 +59,12 @@ PPO = dict(
     GAMMA         = 0.99,
     GAE_LAMBDA    = 0.95,
     CLIP_EPS      = 0.2,
-    ENTROPY_COEF  = 0.01,   # was 0.05 — too high, prevented convergence
+    ENTROPY_COEF  = 0.02,   # was 0.01 — slight increase helps early exploration
     VALUE_COEF    = 0.5,
     LR            = 3e-4,
     GRAD_CLIP     = 0.5,
     EARLY_STOP_RATE = 0.85,
-    HIDDEN        = 256,    # was 128 — match SAC capacity
+    HIDDEN        = 256,
     TARGET_KL     = 0.015,  # abort epoch early if policy drifts too far
 )
 
@@ -76,22 +76,25 @@ TQC = dict(
     GAMMA               = 0.99,
     LR_ACTOR            = 3e-4,
     LR_CRITIC           = 3e-4,
-    LR_ALPHA            = 3e-5,
+    LR_ALPHA            = 1e-5,     # was 3e-5 — slower alpha adaptation
     ALPHA_INIT          = 0.2,
     TAU                 = 0.005,
     HIDDEN              = 256,
     EARLY_STOP_RATE     = 0.85,
     GRAD_CLIP           = 5.0,
     LOG_ALPHA_MIN       = -10.0,
-    LOG_ALPHA_MAX       =  2.0,
+    LOG_ALPHA_MAX       =  0.5,     # was 2.0 — caps alpha at ~1.65 (was ~7.4)
+    TARGET_ENTROPY_SCALE=  0.6,     # fraction of max entropy as target
+                                    # 0.6*ln(5)≈0.97 — lets policy have clear
+                                    # action preferences without forcing uniformity
     # Distributional settings
     N_QUANTILES         = 25,   # quantile atoms per critic
     N_CRITICS           = 5,    # independent critic networks
-    TOP_DROP_PER_CRITIC = 2,    # atoms dropped per critic in target
+    TOP_DROP_PER_CRITIC = 3,    # was 2 — drop more overestimated atoms
                                 # → kept = N_CRITICS * (N_QUANTILES - TOP_DROP_PER_CRITIC)
 )
 
-# -- SAC + PER hyperparameters -----------------------------------------------
+# -- SAC hyperparameters -----------------------------------------------------
 SAC = dict(
     MAX_EPISODES   = 2000,
     REPLAY_SIZE    = 100_000,
@@ -99,17 +102,15 @@ SAC = dict(
     GAMMA          = 0.99,
     LR_ACTOR       = 3e-4,
     LR_CRITIC      = 3e-4,
-    LR_ALPHA       = 3e-5,        # slower alpha adaptation prevents runaway
+    LR_ALPHA       = 1e-5,        # was 3e-5 — slower alpha adaptation
     ALPHA_INIT     = 0.2,
     TAU            = 0.005,
     HIDDEN         = 256,
     EARLY_STOP_RATE = 0.85,
     LOG_ALPHA_MIN  = -10.0,       # alpha floor ~4.5e-5  (never fully off)
-    LOG_ALPHA_MAX  =  2.0,        # alpha cap  ~7.4      (hard clamp)
+    LOG_ALPHA_MAX  =  0.5,        # was 2.0 — caps alpha at ~1.65 (was ~7.4)
+    TARGET_ENTROPY_SCALE = 0.6,   # fraction of max entropy as target
+                                  # 0.6*ln(5)≈0.97 — lets policy have clear
+                                  # action preferences without forcing uniformity
     GRAD_CLIP      = 5.0,         # critic gradient clip
-    # -- PER (Schaul et al. 2015) --------------------------------------------
-    PER_ALPHA      = 0.6,         # prioritisation exponent (0=uniform, 1=full)
-    PER_BETA_START = 0.4,         # IS correction start (annealed -> 1.0)
-    PER_BETA_END   = 1.0,         # IS correction end (fully unbiased)
-    PER_EPS        = 1e-6,        # small constant added to |TD| to avoid zero priority
 )

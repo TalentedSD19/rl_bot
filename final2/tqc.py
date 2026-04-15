@@ -141,7 +141,7 @@ class TQCAgent:
         )
 
         # Learnable temperature (same target as SAC)
-        self.target_entropy = 0.98 * np.log(N_ACTIONS)
+        self.target_entropy = _C["TARGET_ENTROPY_SCALE"] * np.log(N_ACTIONS)
         self.log_alpha = torch.tensor(
             np.log(_C["ALPHA_INIT"]), dtype=torch.float32,
             requires_grad=True, device=device,
@@ -388,7 +388,6 @@ def run_trained(model_path: str = "husky_tqc_best.pth", n_episodes: int = 5):
                   f"| r_vis={int(bool(state[7]))} r_area={state[6]:.3f} "
                   f"| r={reward:+.2f}")
 
-            time.sleep(1 / 60)
 
             if done:
                 wins += 1

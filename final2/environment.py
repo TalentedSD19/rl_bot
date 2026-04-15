@@ -161,6 +161,7 @@ class HuskyTask2Env:
         self.auto_sub      = 0
         self.auto_counter  = 0
         self.magnet_on     = False
+        self.task_success  = False          # True only if cylinder lands inside box
         self._reset_nav_trackers()
 
         for _ in range(20):
@@ -370,8 +371,15 @@ class HuskyTask2Env:
             elif self.auto_sub == 2:
                 self.lift_target = max(self.lift_target - LIFT_STEP, 0.0)
                 if self.lift_target <= 0.01:
-                    reward += 100.0
-                    done    = True
+                    # Let physics settle for a moment before checking position
+                    for _ in range(30):
+                        p.stepSimulation(physicsClientId=pid)
+                    if self._cylinder_inside_box():
+                        reward             += 100.0
+                        self.task_success   = True
+                    else:
+                        reward -= 30.0      # reached drop phase but missed the box
+                    done = True
 
         for _ in range(4):
             self._update_lift()
@@ -381,8 +389,38 @@ class HuskyTask2Env:
 
     # -- Reward --------------------------------------------------------------
 
+    def _cylinder_inside_box(self) -> bool:
+        """
+        Returns True only when the green cylinder has physically landed
+        inside the red hollow box.
+
+        Geometry (from config / make_hollow_box):
+          box half-extent  r = BIG_R * 0.9  = 0.63 m
+          wall thickness   t = 0.05 m
+          inner clearance      = r - t       = 0.58 m
+          cylinder radius      = SML_R       = 0.16 m
+          max centre-offset    = 0.58 - 0.16 = 0.42 m   (horizontal)
+
+          box top z  = box_z + BIG_H / 2               (≈ 0.50 m from ground)
+          cylinder must be below box top to be "inside", not sitting on walls.
+        """
+        cyl_pos = np.array(
+            p.getBasePositionAndOrientation(
+                self.small_cyl, physicsClientId=self.client)[0])
+        box_pos = np.array(
+            p.getBasePositionAndOrientation(
+                self.big_cyl, physicsClientId=self.client)[0])
+
+        horiz_dist = np.linalg.norm(cyl_pos[:2] - box_pos[:2])
+        box_top_z  = box_pos[2] + BIG_H / 2
+
+        inner_clearance = BIG_R * 0.9 - 0.05           # 0.58 m
+        max_offset      = inner_clearance - SML_R       # 0.42 m
+
+        return horiz_dist <= max_offset and cyl_pos[2] < box_top_z
+
     def _reward(self, obs: np.ndarray, action: int):
-        cx, cy, area, visible = self._active_obs(obs)
+        cx, _, area, visible = self._active_obs(obs)
         visible = bool(visible)
         r       = 0.0
 
