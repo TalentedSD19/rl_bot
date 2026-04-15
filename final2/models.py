@@ -2,12 +2,12 @@
 models.py  --  neural network architectures
 
 ActorCritic        : shared trunk + policy head + value head  (PPO)
-QNetwork           : state -> Q-values for all actions          (DQN)
-SACDiscreteActor   : state -> action probabilities              (SAC)
-SACDiscreteCritic  : state -> Q-values for all actions          (SAC twin)
+SACDiscreteActor   : state -> action probabilities             (SAC)
+SACDiscreteCritic  : state -> Q-values for all actions         (SAC twin)
 apply_spin_mask    : action masking shared by all algorithms
 """
 
+import math
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical
@@ -23,20 +23,40 @@ from config import (
 # PPO: Actor-Critic
 # ---------------------------------------------------------------------------
 
+def _ortho(in_f: int, out_f: int, gain: float = math.sqrt(2)) -> nn.Linear:
+    """Linear layer with orthogonal init — standard PPO best practice."""
+    layer = nn.Linear(in_f, out_f)
+    nn.init.orthogonal_(layer.weight, gain=gain)
+    nn.init.zeros_(layer.bias)
+    return layer
+
+
+def _mlp(in_f: int, hidden: int) -> nn.Sequential:
+    """3-layer ReLU trunk with orthogonal init."""
+    return nn.Sequential(
+        _ortho(in_f,  hidden), nn.ReLU(),
+        _ortho(hidden, hidden), nn.ReLU(),
+        _ortho(hidden, hidden), nn.ReLU(),
+    )
+
+
 class ActorCritic(nn.Module):
+    """
+    Separate actor / critic networks — avoids gradient interference.
+    3-layer ReLU trunk (256 units) with orthogonal initialisation.
+    """
     def __init__(self, state_dim: int = OBS_DIM, n_actions: int = N_ACTIONS,
-                 hidden: int = 128):
+                 hidden: int = 256):
         super().__init__()
-        self.trunk = nn.Sequential(
-            nn.Linear(state_dim, hidden), nn.Tanh(),
-            nn.Linear(hidden, hidden),   nn.Tanh(),
-        )
-        self.actor  = nn.Linear(hidden, n_actions)
-        self.critic = nn.Linear(hidden, 1)
+        self.actor_net  = _mlp(state_dim, hidden)
+        self.critic_net = _mlp(state_dim, hidden)
+        self.actor_head  = _ortho(hidden, n_actions, gain=0.01)
+        self.critic_head = _ortho(hidden, 1,         gain=1.0)
 
     def forward(self, x):
-        f = self.trunk(x)
-        return self.actor(f), self.critic(f).squeeze(-1)
+        logits = self.actor_head(self.actor_net(x))
+        value  = self.critic_head(self.critic_net(x)).squeeze(-1)
+        return logits, value
 
     def get_action(self, s):
         """Sample action, return (action, log_prob, value, entropy)."""
@@ -88,42 +108,6 @@ def apply_spin_mask(logits: torch.Tensor, states: torch.Tensor) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
-# DQN: Q-Network
-# ---------------------------------------------------------------------------
-
-class DuelingQNetwork(nn.Module):
-    """
-    Dueling DQN architecture (Wang et al. 2016).
-
-    Shared trunk feeds two separate streams:
-      Value stream     V(s)        -- how good is this state in general
-      Advantage stream A(s, a)     -- how much better is each action vs average
-
-    Q(s, a) = V(s) + A(s, a) - mean_a'[ A(s, a') ]
-
-    Subtracting the mean advantage makes Q identifiable (otherwise V and A
-    can shift by an arbitrary constant and still sum to the same Q).
-    This decomposition helps on tasks where some states are clearly
-    bad/good regardless of action — e.g. the find / approach phases here.
-    """
-    def __init__(self, state_dim: int = OBS_DIM, n_actions: int = N_ACTIONS,
-                 hidden: int = 128):
-        super().__init__()
-        self.trunk = nn.Sequential(
-            nn.Linear(state_dim, hidden), nn.ReLU(),
-            nn.Linear(hidden, hidden),   nn.ReLU(),
-        )
-        self.value_stream     = nn.Linear(hidden, 1)
-        self.advantage_stream = nn.Linear(hidden, n_actions)
-
-    def forward(self, x):
-        f = self.trunk(x)
-        v = self.value_stream(f)                          # (B, 1)
-        a = self.advantage_stream(f)                      # (B, N_ACTIONS)
-        return v + (a - a.mean(dim=1, keepdim=True))      # (B, N_ACTIONS)
-
-
-# ---------------------------------------------------------------------------
 # SAC (Discrete): Actor + Critic
 # ---------------------------------------------------------------------------
 
@@ -169,3 +153,28 @@ class SACDiscreteCritic(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+
+# ---------------------------------------------------------------------------
+# TQC: Distributional Critic
+# ---------------------------------------------------------------------------
+
+class TQCCritic(nn.Module):
+    """
+    State -> N_ACTIONS × N_QUANTILES quantile values.
+    Instantiate N_CRITICS of these in TQCAgent.
+    """
+    def __init__(self, state_dim: int = OBS_DIM, n_actions: int = N_ACTIONS,
+                 n_quantiles: int = 25, hidden: int = 256):
+        super().__init__()
+        self.n_actions   = n_actions
+        self.n_quantiles = n_quantiles
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden),   nn.ReLU(),
+            nn.Linear(hidden, n_actions * n_quantiles),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Returns [B, N_ACTIONS, N_QUANTILES]."""
+        return self.net(x).view(x.shape[0], self.n_actions, self.n_quantiles)

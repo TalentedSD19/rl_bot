@@ -2,7 +2,7 @@
 sac.py  --  Soft Actor-Critic for Discrete Actions
             (Christodoulou 2019)
 
-  ReplayBuffer  : uniform experience replay (same shape as DQN's)
+  ReplayBuffer  : uniform experience replay
   SACAgent      : actor + twin critics + target critics + auto-alpha
   train         : full training loop
   run_trained   : load actor checkpoint and visualise

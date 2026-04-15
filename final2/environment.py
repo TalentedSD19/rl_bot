@@ -70,7 +70,55 @@ class HuskyTask2Env:
                                       rgbaColor=color, physicsClientId=pid)
             return p.createMultiBody(mass, col, vis, physicsClientId=pid)
 
-        self.big_cyl   = make_cyl(0,   BIG_R, BIG_H, [1.0, 0.0, 0.0, 1.0])
+        def make_hollow_box(mass, r, h, color, t=0.05):
+            """Hollow open-top box: bottom plate + 4 walls, no lid."""
+            orn = [0, 0, 0, 1]
+
+            def box_col(hx, hy, hz):
+                return p.createCollisionShape(p.GEOM_BOX,
+                                              halfExtents=[hx, hy, hz],
+                                              physicsClientId=pid)
+
+            def box_vis(hx, hy, hz):
+                return p.createVisualShape(p.GEOM_BOX,
+                                           halfExtents=[hx, hy, hz],
+                                           rgbaColor=color,
+                                           physicsClientId=pid)
+
+            # (halfExtents, position relative to body origin = box centre)
+            parts = [
+                ([r,     r,   t / 2],  [0,          0,          -h / 2 + t / 2]),  # bottom
+                ([t / 2, r,   h / 2],  [ r - t / 2, 0,           0            ]),  # wall +X
+                ([t / 2, r,   h / 2],  [-(r - t/2), 0,           0            ]),  # wall -X
+                ([r - t, t/2, h / 2],  [0,           r - t / 2,  0            ]),  # wall +Y
+                ([r - t, t/2, h / 2],  [0,          -(r - t/2),  0            ]),  # wall -Y
+            ]
+
+            cols = [box_col(*he) for he, _ in parts]
+            viss = [box_vis(*he) for he, _ in parts]
+            lpos = [pos          for _,  pos in parts]
+            n    = len(parts)
+
+            return p.createMultiBody(
+                baseMass=mass,
+                baseCollisionShapeIndex=-1,
+                baseVisualShapeIndex=-1,
+                basePosition=[0, 0, 0],
+                baseOrientation=orn,
+                linkMasses=[0.0] * n,
+                linkCollisionShapeIndices=cols,
+                linkVisualShapeIndices=viss,
+                linkPositions=lpos,
+                linkOrientations=[orn] * n,
+                linkInertialFramePositions=[[0, 0, 0]] * n,
+                linkInertialFrameOrientations=[orn] * n,
+                linkParentIndices=[0] * n,
+                linkJointTypes=[p.JOINT_FIXED] * n,
+                linkJointAxis=[[0, 0, 1]] * n,
+                physicsClientId=pid,
+            )
+
+        self.big_cyl   = make_hollow_box(0, BIG_R * 0.9, BIG_H, [1.0, 0.0, 0.0, 1.0])
         self.small_cyl = make_cyl(0.2, SML_R, SML_H, [0.0, 1.0, 0.0, 1.0])
 
     # -- Reset ---------------------------------------------------------------

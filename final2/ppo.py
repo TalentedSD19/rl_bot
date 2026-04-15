@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import LinearLR
 
 from config import PPO, MAX_STEPS, PHASE_NAMES, ACTION_NAMES
 from environment import HuskyTask2Env
@@ -37,7 +38,7 @@ class RolloutBuffer:
         self.dones.append(done)
 
     def compute_gae(self, last_value: float, device):
-        """Returns (states, actions, log_probs, advantages, returns) as tensors."""
+        """Returns (states, actions, log_probs, advantages, returns, old_values) as tensors."""
         n          = len(self.rewards)
         advantages = np.zeros(n, dtype=np.float32)
         gae        = 0.0
@@ -51,14 +52,15 @@ class RolloutBuffer:
             gae           = delta + _C["GAMMA"] * _C["GAE_LAMBDA"] * (1 - self.dones[t]) * gae
             advantages[t] = gae
 
-        returns   = advantages + vals[:n]
-        states    = torch.FloatTensor(np.array(self.states)).to(device)
-        actions   = torch.LongTensor(self.actions).to(device)
-        log_probs = torch.stack(self.log_probs).to(device).detach()
-        adv_t     = torch.FloatTensor(advantages).to(device)
-        ret_t     = torch.FloatTensor(returns).to(device)
-        adv_t     = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
-        return states, actions, log_probs, adv_t, ret_t
+        returns    = advantages + vals[:n]
+        states     = torch.FloatTensor(np.array(self.states)).to(device)
+        actions    = torch.LongTensor(self.actions).to(device)
+        log_probs  = torch.stack(self.log_probs).to(device).detach()
+        adv_t      = torch.FloatTensor(advantages).to(device)
+        ret_t      = torch.FloatTensor(returns).to(device)
+        old_vals_t = torch.FloatTensor(vals[:n]).to(device)
+        adv_t      = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
+        return states, actions, log_probs, adv_t, ret_t, old_vals_t
 
     def clear(self):
         self.states    = []
@@ -77,23 +79,39 @@ class RolloutBuffer:
 # ---------------------------------------------------------------------------
 
 def ppo_update(policy, optimizer, states, actions, old_log_probs,
-               advantages, returns, device):
+               advantages, returns, old_values):
     n = len(states)
     pl_sum = vl_sum = ent_sum = 0.0
+    n_updates = 0
+    clip = _C["CLIP_EPS"]
 
     for _ in range(_C["N_EPOCHS"]):
-        idx = torch.randperm(n)
+        idx        = torch.randperm(n)
+        kl_epoch   = 0.0
+        n_batches  = 0
+
         for start in range(0, n, _C["MINI_BATCH"]):
             mb = idx[start: start + _C["MINI_BATCH"]]
             new_lp, vals, entropy = policy.evaluate(states[mb], actions[mb])
-            ratio  = torch.exp(new_lp - old_log_probs[mb])
-            adv    = advantages[mb]
+
+            logratio = new_lp - old_log_probs[mb]
+            ratio    = torch.exp(logratio)
+            adv      = advantages[mb]
+
+            # Policy loss (clipped surrogate)
             p_loss = -torch.min(
                 ratio * adv,
-                torch.clamp(ratio, 1 - _C["CLIP_EPS"], 1 + _C["CLIP_EPS"]) * adv
+                torch.clamp(ratio, 1 - clip, 1 + clip) * adv
             ).mean()
-            v_loss = nn.functional.mse_loss(vals, returns[mb])
-            loss   = p_loss + _C["VALUE_COEF"] * v_loss - _C["ENTROPY_COEF"] * entropy.mean()
+
+            # Value loss with clipping
+            v_unclipped = (vals - returns[mb]).pow(2)
+            v_clipped   = old_values[mb] + torch.clamp(
+                vals - old_values[mb], -clip, clip)
+            v_loss      = 0.5 * torch.max(
+                v_unclipped, (v_clipped - returns[mb]).pow(2)).mean()
+
+            loss = p_loss + _C["VALUE_COEF"] * v_loss - _C["ENTROPY_COEF"] * entropy.mean()
 
             optimizer.zero_grad()
             loss.backward()
@@ -103,9 +121,20 @@ def ppo_update(policy, optimizer, states, actions, old_log_probs,
             pl_sum  += p_loss.item()
             vl_sum  += v_loss.item()
             ent_sum += entropy.mean().item()
+            n_updates += 1
 
-    n_updates = _C["N_EPOCHS"] * max(1, n // _C["MINI_BATCH"])
-    return pl_sum / n_updates, vl_sum / n_updates, ent_sum / n_updates
+            # Approximate KL for early stopping (no grad needed)
+            with torch.no_grad():
+                kl_epoch += ((ratio - 1) - logratio).mean().item()
+            n_batches += 1
+
+        # Abort remaining epochs if policy has drifted too far
+        if n_batches > 0 and (kl_epoch / n_batches) > _C["TARGET_KL"]:
+            break
+
+    return (pl_sum / max(1, n_updates),
+            vl_sum / max(1, n_updates),
+            ent_sum / max(1, n_updates))
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +148,9 @@ def train(save_prefix: str = "husky_ppo"):
     env       = HuskyTask2Env(gui=False)
     policy    = ActorCritic(hidden=_C["HIDDEN"]).to(device)
     optimizer = optim.Adam(policy.parameters(), lr=_C["LR"], eps=1e-5)
+    # Linearly decay LR to 10 % of its initial value over all episodes
+    scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1,
+                         total_iters=_C["MAX_EPISODES"])
     buffer    = RolloutBuffer()
 
     ep_rewards  = []
@@ -197,15 +229,17 @@ def train(save_prefix: str = "husky_ppo"):
         # Bootstrap + PPO update
         with torch.no_grad():
             s_t = torch.FloatTensor(state).unsqueeze(0).to(device)
-            _, last_val, _, _ = policy.get_action(s_t)
+            _, last_val = policy(s_t)
             last_value = 0.0 if buffer.dones[-1] == 1.0 else last_val.item()
 
-        states, actions, old_lp, adv, ret = buffer.compute_gae(last_value, device)
+        states, actions, old_lp, adv, ret, old_vals = buffer.compute_gae(last_value, device)
         last_pl, last_vl, last_ent = ppo_update(
-            policy, optimizer, states, actions, old_lp, adv, ret, device)
+            policy, optimizer, states, actions, old_lp, adv, ret, old_vals)
+        scheduler.step()
         buffer.clear()
+        cur_lr = scheduler.get_last_lr()[0]
         print(f"  ↻ update | π {last_pl:.4f}  V {last_vl:.4f}  "
-              f"H {last_ent:.3f}  steps {total_steps}")
+              f"H {last_ent:.3f}  lr {cur_lr:.2e}  steps {total_steps}")
 
     env.close()
     torch.save(policy.state_dict(), f"{save_prefix}_final.pth")

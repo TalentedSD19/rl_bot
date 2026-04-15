@@ -4,13 +4,14 @@ main.py  --  entry point
 Usage:
   python main.py                         # train with PPO (default)
   python main.py --algo ppo              # train with PPO
+  python main.py --algo sac              # train with SAC
+  python main.py --algo tqc              # train with TQC
   python main.py --algo ppo --run        # watch best PPO checkpoint
   python main.py --algo ppo --run --model path/to/checkpoint.pth
 
 Adding a new algorithm:
-  1. Create dqn.py  with  train(save_prefix) / run_trained(model_path, n_episodes)
-  2. Create sac.py  with  train(save_prefix) / run_trained(model_path, n_episodes)
-  3. Import them below and add a case in _get_algo().
+  1. Create <algo>.py with train(save_prefix) / run_trained(model_path, n_episodes)
+  2. Import it below and add a case in _get_algo().
 """
 
 import argparse
@@ -28,19 +29,19 @@ def _get_algo(name: str):
     if name == "ppo":
         import ppo
         return ppo
-    elif name == "dqn":
-        import dqn
-        return dqn
     elif name == "sac":
         import sac
         return sac
-    raise ValueError(f"Unknown algorithm: {name!r}. Choose from: ppo, dqn, sac")
+    elif name == "tqc":
+        import tqc
+        return tqc
+    raise ValueError(f"Unknown algorithm: {name!r}. Choose from: ppo, sac, tqc")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Husky RL trainer")
     parser.add_argument("--algo",   default="ppo",
-                        choices=["ppo", "dqn", "sac"],
+                        choices=["ppo", "sac", "tqc"],
                         help="RL algorithm to use")
     parser.add_argument("--run",    action="store_true",
                         help="Run inference instead of training")
