@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:xlnwel.github.io)",
+      "WebFetch(domain:di-engine-docs.readthedocs.io)",
+      "WebFetch(domain:docs.ray.io)",
+      "WebFetch(domain:vladlen.info)"
+    ]
+  }
+}
